@@ -1,9 +1,11 @@
 {
   "builds": [
     {"src": "accuracy.html", "use": "@vercel/static"},
+    {"src": "accuracy-v3.html", "use": "@vercel/static"},
     {"src": "letters.html", "use": "@vercel/static"}
   ],
   "routes": [
+    {"src": "/accuracy-v3/?", "dest": "accuracy-v3.html"},
     {"src": "/accuracy/?", "dest": "accuracy.html"},
     {"src": "/letters/?", "dest": "letters.html"},
     {"src": "/?", "dest": "accuracy.html"}
