@@ -25,7 +25,7 @@ input[type=search]{flex:1;min-width:220px;padding:11px 14px;border:1px solid var
 <div id="app" class="w">
 <div class="eyebrow">ULTAI · ACCURACY DEVELOPMENTS LTD</div>
 <h1>PIE Daily Planning Review</h1>
-<div class="muted">Upload the fresh Bromley/Lewisham council CSV each day. PIE deduplicates against history, scores new/changed applications and keeps your review/letter/posting decisions.</div>
+<div class="muted">Upload the fresh Bromley/Lewisham council CSV each day. PIE v2 deduplicates against history, re-scores construction fit on every import, and keeps your review/letter/posting decisions.</div>
 
 <div id="notice" class="notice"></div>
 
@@ -91,16 +91,75 @@ var view='today';
 var selected={};
 function $(id){return document.getElementById(id)}
 function nowId(){var d=new Date();return d.toISOString().slice(0,10)+'T'+d.toTimeString().slice(0,8)}
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]})}
 function keyOf(r){return String(r.council||'').trim().toLowerCase()+'::'+String(r.reference||'').trim().toUpperCase()}
 function save(){localStorage.setItem(KEY,JSON.stringify({history:history,currentBatch:currentBatch}));render()}
 function load(){try{var x=JSON.parse(localStorage.getItem(KEY)||'{}');history=x.history||{};currentBatch=x.currentBatch||''}catch(e){history={};currentBatch=''}}
 function notice(text,ok){var n=$('notice');n.textContent=text;n.className='notice '+(ok?'ok':'err')}
 function parseCSV(text){text=String(text||'').replace(/^\uFEFF/,'');var rows=[],row=[],field='',quoted=false;for(var i=0;i<text.length;i++){var c=text[i],n=text[i+1];if(c==='"'){if(quoted&&n==='"'){field+='"';i++}else quoted=!quoted}else if(c===','&&!quoted){row.push(field);field=''}else if((c==='\n'||c==='\r')&&!quoted){if(c==='\r'&&n==='\n')i++;row.push(field);field='';if(row.some(function(v){return String(v).trim()!==''}))rows.push(row);row=[]}else field+=c}if(field!==''||row.length){row.push(field);rows.push(row)}if(rows.length<2)return [];var headers=rows[0].map(function(v){return String(v).trim().toLowerCase()});return rows.slice(1).map(function(r){var o={};headers.forEach(function(k,j){o[k]=r[j]==null?'':r[j]});return o})}
 function validate(rows){if(!rows.length)return 'CSV has no data rows.';var req=['council','reference','address','description','status','date_validated','date_decision','url'];var keys=Object.keys(rows[0]).map(function(x){return x.toLowerCase()});var missing=req.filter(function(k){return keys.indexOf(k)<0});return missing.length?'Missing columns: '+missing.join(', '):''}
-function classify(r){var d=String(r.description||'').toLowerCase();var ref=String(r.reference||'').toUpperCase();var score=15,cls='REJECT',why=['No strong Accuracy £50k+ construction signal'];if(/\/TCA|\/TPO|\/CON/.test(ref)||/\btree\b|fell to ground|air source heat pump/.test(d)){score=5;why=['Non-core / low-value planning activity']}else if(/\/LDC/.test(ref)||d.indexOf('lawful development certificate')>=0){score=20;why=['Certificate application; weak immediate £50k+ construction signal']}else if(d.indexOf('retrospective')>=0&&d.indexOf('conservatory')>=0){score=25;why=['Retrospective small works; weak new-build opportunity']}else if(d.indexOf('minor material amendment')>=0||d.indexOf('section 73')>=0){if(/detached dwelling|swimming pool|new dwelling/.test(d)){score=85;cls='STRONG';why=['Underlying major residential build','Likely well above £50k','Amendment indicates active project']}else{score=45;cls='REVIEW';why=['Amendment application; inspect parent permission before outreach']}}else if(/two-bedroom dwelling|dwellinghouse|new dwelling/.test(d)){score=95;cls='STRONG';why=['New dwelling','Very likely £50k+','Core Accuracy construction opportunity']}else if(/rear and side extension|side and rear extension/.test(d)){score=78;cls='STRONG';why=['Combined rear + side extension','Likely substantial residential works','Strong £50k+ candidate']}else if(d.indexOf('extension')>=0&&(d.indexOf('outbuilding')>=0||d.indexOf('demolition of existing detached garage')>=0)){score=88;cls='STRONG';why=['Multiple construction elements','Extension + demolition + outbuilding','Strong £50k+ candidate']}else if(/single storey rear extension|rear extension/.test(d)){score=58;cls='REVIEW';why=['Relevant residential extension','Value cannot be confirmed from feed','Check drawings/size before £50k+ approval']}return {score:score,classification:cls,why:why}}
+function classify(r){
+  var d=String(r.description||'').toLowerCase();
+  var ref=String(r.reference||'').toUpperCase();
+  var status=String(r.status||'').toLowerCase();
+  var decided=String(r.date_decision||'').trim()!==''||/approv|grant|permission/.test(status);
+  var score=0,why=[];
+  if(/\/TCA|\/TPO|\/CON/.test(ref)||/\btree\b|fell to ground|prune|crown reduc|pollard|air source heat pump|biodiversity gain plan|details submitted to comply/.test(d)){
+    return {score:5,classification:'REJECT',why:['Non-core planning activity','No credible £50k+ main-contractor opportunity']};
+  }
+  if(/\/LDC/.test(ref)||/lawful development certificate/.test(d)){
+    return {score:15,classification:'REJECT',why:['Certificate-only application','No reliable live construction scope in this record']};
+  }
+  if(/retrospective/.test(d)&&/conservatory|minor/.test(d)){
+    return {score:20,classification:'REJECT',why:['Retrospective/small works signal','Weak new £50k+ opportunity']};
+  }
+  if(/new dwelling|dwellinghouse|two-bedroom dwelling|erection of .*dwelling/.test(d)){score+=55;why.push('New dwelling / whole-build scope')}
+  if(/two storey|two-storey/.test(d)){score+=12;why.push('Two-storey construction')}
+  if(/demolition of existing dwelling|demolition.*dwelling/.test(d)){score+=18;why.push('Demolition + rebuild signal')}
+  if(/swimming pool/.test(d)){score+=10;why.push('Additional high-value construction element')}
+  if(/rear and side extension|side and rear extension/.test(d)){score+=55;why.push('Combined rear + side extension')}
+  else if(/extension/.test(d)){score+=30;why.push('Residential extension')}
+  if(/loft conversion|roof extension|mansard/.test(d)){score+=28;why.push('Loft/roof conversion')}
+  if(/outbuilding/.test(d)){score+=18;why.push('Additional outbuilding')}
+  if(/demolition of existing detached garage|demolition.*garage/.test(d)){score+=12;why.push('Garage demolition/reconfiguration')}
+  if(/basement/.test(d)){score+=25;why.push('Basement works')}
+  if(/conversion/.test(d)&&!/lawful development certificate/.test(d)){score+=20;why.push('Conversion works')}
+  if(/refurbishment|renovation/.test(d)){score+=18;why.push('Refurbishment scope')}
+  if(/minor material amendment|section 73|\bS73\b/i.test(String(r.description||''))||/\/S73/.test(ref)){
+    if(score>=45){score+=10;why.push('Active amendment to substantial underlying scheme')}
+    else {score=Math.max(score,35);why.push('Amendment record — inspect parent permission before outreach')}
+  }
+  if(decided){score+=8;why.push('Decision/permission signal present')}
+  else if(/registered|valid/.test(status)){why.push('Application is live; decision not yet shown in this feed')}
+  score=Math.max(0,Math.min(100,score));
+  var cls=score>=55?'STRONG':score>=30?'REVIEW':'REJECT';
+  if(!why.length)why=['No strong Accuracy £50k+ construction signal'];
+  if(cls==='STRONG')why.push('Strong £50k+ candidate — human validation still required');
+  else if(cls==='REVIEW')why.push('Potential fit — inspect drawings/parent permission before approval');
+  else why.push('Low priority for Accuracy outreach');
+  return {score:score,classification:cls,why:why};
+}
 function digest(r){return [r.address,r.description,r.status,r.date_validated,r.date_decision,r.url].join('|')}
-function ingestText(text,source){var rows=parseCSV(text),problem=validate(rows);if(problem){notice(problem,false);return}var batch=nowId(),added=0,changed=0,unchanged=0;rows.forEach(function(r){var k=keyOf(r);if(!k||k==='::')return;var a=classify(r),old=history[k],dg=digest(r);if(!old){history[k]={council:r.council,reference:r.reference,address:r.address,description:r.description,status:r.status,date_validated:r.date_validated,date_decision:r.date_decision,url:r.url,pie_score:a.score,classification:a.classification,why:a.why,review_status:a.classification==='REJECT'?'AUTO_REJECTED':'PENDING',posted_at:null,outcome:'OPEN',first_seen:batch,last_seen:batch,last_batch:batch,digest:dg};added++}else{if(old.digest!==dg){old.address=r.address;old.description=r.description;old.status=r.status;old.date_validated=r.date_validated;old.date_decision=r.date_decision;old.url=r.url;old.pie_score=a.score;old.classification=a.classification;old.why=a.why;old.last_seen=batch;old.last_batch=batch;old.digest=dg;if(old.review_status!=='APPROVED'&&!old.posted_at)old.review_status=a.classification==='REJECT'?'AUTO_REJECTED':'PENDING';changed++}else{old.last_seen=batch;old.last_batch=batch;unchanged++}}});currentBatch=batch;save();setView('today');notice('Processed '+rows.length+' rows from '+source+'. '+added+' new, '+changed+' changed, '+unchanged+' already known.',true)}
+function ingestText(text,source){
+  var rows=parseCSV(text),problem=validate(rows);
+  if(problem){notice(problem,false);return}
+  var batch=nowId(),added=0,changed=0,unchanged=0;
+  rows.forEach(function(r){
+    var k=keyOf(r);if(!k||k==='::')return;
+    var a=classify(r),old=history[k],dg=digest(r);
+    if(!old){
+      history[k]={council:r.council,reference:r.reference,address:r.address,description:r.description,status:r.status,date_validated:r.date_validated,date_decision:r.date_decision,url:r.url,pie_score:a.score,classification:a.classification,why:a.why,review_status:a.classification==='REJECT'?'AUTO_REJECTED':'PENDING',posted_at:null,outcome:'OPEN',first_seen:batch,last_seen:batch,last_batch:batch,digest:dg};
+      added++;
+    } else {
+      if(old.digest!==dg){
+        old.address=r.address;old.description=r.description;old.status=r.status;old.date_validated=r.date_validated;old.date_decision=r.date_decision;old.url=r.url;old.pie_score=a.score;old.classification=a.classification;old.why=a.why;old.last_seen=batch;old.last_batch=batch;old.digest=dg;
+        if(old.review_status!=='APPROVED'&&!old.posted_at)old.review_status=a.classification==='REJECT'?'AUTO_REJECTED':'PENDING';
+        changed++;
+      } else {old.pie_score=a.score;old.classification=a.classification;old.why=a.why;old.last_seen=batch;old.last_batch=batch;if(old.review_status!=='APPROVED'&&!old.posted_at)old.review_status=a.classification==='REJECT'?'AUTO_REJECTED':'PENDING';unchanged++}
+    }
+  });
+  currentBatch=batch;save();setView('today');notice('Processed '+rows.length+' rows from '+source+'. '+added+' new, '+changed+' changed, '+unchanged+' already known.',true)
+}
 function stage(x){if(x.posted_at)return 'POSTED';if(x.review_status==='APPROVED')return 'LETTER';if(x.review_status==='REJECTED'||x.review_status==='AUTO_REJECTED')return 'REJECTED';return x.classification}
 function allItems(){return Object.keys(history).map(function(k){var x=history[k];x._key=k;return x})}
 function visible(){var q=$('search').value.toLowerCase();return allItems().filter(function(x){var st=stage(x),ok=view==='all'||(view==='today'&&x.last_batch===currentBatch)||(view==='recommended'&&(st==='STRONG'||st==='REVIEW'))||(view==='strong'&&st==='STRONG')||(view==='review'&&st==='REVIEW')||(view==='letters'&&st==='LETTER')||(view==='posted'&&st==='POSTED')||(view==='rejected'&&st==='REJECTED');return ok&&(!q||[x.reference,x.address,x.description,x.council].join(' ').toLowerCase().indexOf(q)>=0)}).sort(function(a,b){return (b.pie_score||0)-(a.pie_score||0)})}
