@@ -1,0 +1,9 @@
+{
+  "builds": [
+    {"src": "accuracy.html", "use": "@vercel/static"}
+  ],
+  "routes": [
+    {"src": "/accuracy/?", "dest": "accuracy.html"},
+    {"src": "/?", "dest": "accuracy.html"}
+  ]
+}
