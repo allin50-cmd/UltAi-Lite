@@ -6,8 +6,8 @@
   ],
   "routes": [
     {"src": "/accuracy-v3/?", "dest": "accuracy-v3.html"},
-    {"src": "/accuracy/?", "dest": "accuracy.html"},
+    {"src": "/accuracy/?", "dest": "accuracy-v3.html"},
     {"src": "/letters/?", "dest": "letters.html"},
-    {"src": "/?", "dest": "accuracy.html"}
+    {"src": "/?", "dest": "accuracy-v3.html"}
   ]
 }
